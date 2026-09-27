@@ -52,7 +52,7 @@ namespace PartyPrototype.Editor
                 EditorUtility.DisplayDialog("Android platform selected", "Wait for Unity to finish recompiling for Android, then select this build menu again. This keeps the build from using assemblies from before the platform switch.", "OK");
                 return;
             }
-            string path = EditorUtility.SaveFilePanel("Save Android APK", "", "PartyPrototype-0.4.1", "apk");
+            string path = EditorUtility.SaveFilePanel("Save Android APK", "", "PartyPrototype-0.8.1", "apk");
             if (string.IsNullOrEmpty(path)) return;
             if (!EnsureScene()) return;
             PlayerSettings.Android.forceInternetPermission = true;
@@ -77,9 +77,9 @@ namespace PartyPrototype.Editor
                 Debug.LogError("Build failed. Check the first error in the Console.");
             else
             {
-                Debug.Log("Built party prototype HUD 0.4.1: " + path);
+                Debug.Log("Built party prototype HUD 0.8.1: " + path);
                 if (target == BuildTarget.Android && !install)
-                    EditorUtility.DisplayDialog("APK built — installation still needed", "Install this newly built APK on your phone:\n" + path + "\n\nBuilding a file does not update the installed app. The start screen must show HUD 0.4.1 and the new build stamp. Alternatively use Build and Run Android (USB).", "OK");
+                    EditorUtility.DisplayDialog("APK built — installation still needed", "Install this newly built APK on your phone:\n" + path + "\n\nBuilding a file does not update the installed app. The start screen must show HUD 0.8.1 and the new build stamp. Alternatively use Build and Run Android (USB).", "OK");
                 EditorUtility.RevealInFinder(path);
             }
         }

@@ -21,10 +21,10 @@ namespace PartyPrototype.Editor
                         using (var memory = new MemoryStream())
                         {
                             stream.CopyTo(memory); var bytes = memory.ToArray();
-                            verified |= Encoding.UTF8.GetString(bytes).Contains("HUD 0.4.1") || Encoding.Unicode.GetString(bytes).Contains("HUD 0.4.1");
+                            verified |= Encoding.UTF8.GetString(bytes).Contains("HUD 0.8.1") || Encoding.Unicode.GetString(bytes).Contains("HUD 0.8.1");
                         }
             if (!verified) throw new BuildFailedException("APK contains stale or missing HUD code. Switch the active platform to Android in Build Profiles, wait for compilation, then use Party Prototype > Build Android APK again. Do not install this APK.");
-            UnityEngine.Debug.Log("APK contents verified: HUD 0.4.1 is present in the compiled game code.");
+            UnityEngine.Debug.Log("APK contents verified: HUD 0.8.1 is present in the compiled game code.");
         }
     }
 }

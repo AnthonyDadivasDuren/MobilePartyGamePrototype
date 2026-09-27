@@ -11,7 +11,7 @@ namespace PartyPrototype.Editor
         public int callbackOrder => 0;
         public void OnPreprocessBuild(BuildReport report)
         {
-            PlayerSettings.bundleVersion = "0.4.1";
+            PlayerSettings.bundleVersion = "0.8.1";
             const string materialPath = "Assets/PartyPrototype/Resources/PartyTiltMaterial.mat";
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Material>(materialPath) == null)
             {

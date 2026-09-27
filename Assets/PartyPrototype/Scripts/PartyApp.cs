@@ -15,7 +15,7 @@ namespace PartyPrototype
         LanTransport network;
         PartyRules rules;
         State state;
-        bool hosting, connecting, joiningForm;
+        bool hosting, connecting, joiningForm, solo;
         bool renderPending, forceRender;
         int myId = -1;
         string playerName = "", address = "", notice = "", signature = "";
@@ -24,6 +24,11 @@ namespace PartyPrototype
         Text clock;
         BallTiltGame tiltGame;
         Text tiltStatus;
+        ReactionTarget reaction;
+        Text reactionStatus;
+        int selectedDifficulty;
+        int selectedLength = 5;
+        int BaseDrinks => (state != null ? state.difficulty : selectedDifficulty) == 2 ? 4 : (state != null ? state.difficulty : selectedDifficulty) == 1 ? 2 : 1;
         InputField nameField, addressField;
         readonly Dictionary<int, double> pending = new Dictionary<int, double>();
         readonly Dictionary<int, double> closing = new Dictionary<int, double>();
@@ -130,8 +135,10 @@ namespace PartyPrototype
         }
         void RenderNow(bool force)
         {
-            string key = state == null ? notice + connecting : state.phase + state.round + state.activeId + state.selectedIndex + state.result
-                + string.Join("|", state.players.Select(p => p.id + ":" + p.name + ":" + p.gulps));
+            // A player leaving must not recreate another player's running reaction timer.
+            if (!force && state != null && state.phase == "Reaction" && reaction != null) return;
+            string key = state == null ? notice + connecting : state.phase + state.lengthStep + state.difficulty + state.round + state.activeId + state.selectedIndex + state.result
+                + string.Join("|", state.players.Select(p => p.id + ":" + p.name + ":" + (state.phase == "Reaction" || state.phase == "Tilt" ? 0 : p.gulps)));
             if (!force && signature == key) { if (clock != null && state != null) clock.text = state.seconds + " seconds"; return; }
             if (state == null || state.phase != "Tilt")
             { if (tiltGame != null) Destroy(tiltGame.gameObject); tiltGame = null; }
@@ -145,13 +152,16 @@ namespace PartyPrototype
                 Destroy(child.gameObject);
             }
             content.anchoredPosition = Vector2.zero;
-            Label("PARTY NIGHT", 30, Accent);
+            Label("HinkBuddy", 30, Accent);
+            if (state != null && state.fullGame && state.phase != "Finished") Label(state.round == state.totalRounds ? "FINAL ROUND · BALL TILT" : "ROUND " + state.round + " / " + state.totalRounds, 22, Cream);
             if (state == null)
             {
                 Space(65);
                 Label(joiningForm ? "JOIN THE PARTY" : "GET THE PARTY STARTED", 38, Cream);
                 Label(joiningForm ? "Enter the address shown on the host’s screen." : "One host. One Wi-Fi. Everyone plays.", 24, Color.white);
                 Space(22);
+                DifficultyPicker(false);
+                if (!joiningForm) LengthPicker(false);
                 Label("YOUR NAME", 20, Accent); nameField = Input(playerName, "Enter your name", 20);
                 addressField = null;
                 if (joiningForm)
@@ -164,6 +174,12 @@ namespace PartyPrototype
                 else
                 {
                     Space(12);
+                    Label("PLAY ON YOUR OWN", 22, Accent);
+                    Button("Solo full game", () => StartSolo(false, false, true), true, true);
+                    Button("Solo quiz", () => StartSolo(false), true, true);
+                    Button("Solo Ball Tilt", () => StartSolo(true));
+                    Button("Solo reaction test", () => StartSolo(false, true));
+                    Label("PLAY WITH FRIENDS", 22, Accent);
                     Button("Host a party", Host, true, true);
                     Button("Join a party", () => { playerName = nameField.text; joiningForm = true; Render(true); });
                 }
@@ -171,7 +187,7 @@ namespace PartyPrototype
                 Space(30);
                 Label("2–8 PLAYERS  /  SAME WI-FI", 20, Accent);
                 var build = Resources.Load<TextAsset>("PartyBuildInfo");
-                Label("HUD 0.4.1  ·  " + (build != null ? build.text.Trim() : "Editor / source"), 17, Color.gray);
+                Label("HUD 0.8.1  ·  " + (build != null ? build.text.Trim() : "Editor / source"), 17, Color.gray);
                 return;
             }
             string active = state.players.FirstOrDefault(p => p.id == state.activeId)?.name ?? "Player";
@@ -179,6 +195,8 @@ namespace PartyPrototype
             {
                 Space(22);
                 Label("PARTY LOBBY", 38, Cream);
+                DifficultyPicker(true);
+                LengthPicker(true);
                 Label(state.players.Count + " / 8 PLAYERS CONNECTED", 24, Accent);
                 Space(8);
                 foreach (var p in state.players)
@@ -197,27 +215,42 @@ namespace PartyPrototype
                 else Card("Host address: " + address, 72, Panel, Cream, 27);
                 Space(12);
                 Label(state.players.Count < 2 ? "Waiting for at least one more player" : "Ready · " + state.players.Count + " players can start", 25, Cream);
-                if (hosting) Button("Start game  >", () => Command("start"), state.players.Count >= 2, true);
+                if (hosting) { Button("Start full game  >", () => Command("fullStart"), state.players.Count >= 2, true); Button("Quiz-only test", () => Command("start"), state.players.Count >= 2); }
                 else Card("Waiting for the host to start", 76, Background, Cream, 25);
-                if (hosting) Button("Test Ball Tilt", () => Command("tiltStart"), state.players.Count >= 2);
-                Label("10 rounds  ·  15 seconds per question", 21, Color.gray);
+                if (hosting) { Button("Test Ball Tilt", () => Command("tiltStart"), state.players.Count >= 2); Button("Test reaction", () => Command("reactionStart"), state.players.Count >= 2); }
+                Label("Quiz + Reaction + Ball Tilt · cumulative scores", 21, Color.gray);
             }
             else if (state.phase == "Tilt")
             {
                 Label("BALL TILT", 36, Cream);
-                Label("Tilt the board. Roll to the green finish.", 23, Accent);
+                Label("Tilt to roll the ball to the green finish.", 23, Accent);
                 if (tiltGame == null)
                 {
                     var game = new GameObject("Ball Tilt Round"); game.transform.SetParent(transform);
                     tiltGame = game.AddComponent<BallTiltGame>(); tiltGame.Initialize();
                     tiltGame.Finished = () => Command("tiltFinish");
+                    tiltGame.Failed = () => Command("tiltFail");
                 }
                 var view = Rect("Course View", content); Height(view.gameObject, 570);
-                view.gameObject.AddComponent<RawImage>().texture = tiltGame.View;
+                var picture = Rect("Portrait Camera Image", view);
+                var fit = picture.gameObject.AddComponent<AspectRatioFitter>();
+                fit.aspectMode = AspectRatioFitter.AspectMode.FitInParent; fit.aspectRatio = 640f / 800f;
+                var preview = picture.gameObject.AddComponent<RawImage>(); preview.texture = tiltGame.View; preview.raycastTarget = false;
                 tiltStatus = Label("Get ready…", 25, Cream);
-                Label(Application.isMobilePlatform ? "Hold comfortably, then calibrate. Tilt gently." : "WASD / arrows tilt the world", 22, Accent);
+                Label(Application.isMobilePlatform ? "Hold comfortably, then calibrate. Tilt gently." : "WASD / arrows steer the ball", 22, Accent);
                 Button("Calibrate neutral tilt", () => tiltGame.Calibrate());
-                Button("Reset ball", () => tiltGame.Retry());
+            }
+            else if (state.phase == "Reaction")
+            {
+                Label("REACTION TEST", 36, Cream);
+                Label("Wait for green. Tap the circle, not the background.", 23, Accent);
+                var area = Rect("Reaction Area", content); Height(area.gameObject, 520);
+                area.gameObject.AddComponent<Image>().color = Panel;
+                var target = Rect("Moving Circle", area); target.anchorMin = target.anchorMax = new Vector2(.5f,.5f);
+                target.sizeDelta = new Vector2(110,110);
+                reaction = target.gameObject.AddComponent<ReactionTarget>(); reaction.Initialize(state.reactionSeed);
+                reaction.Result = ms => Command("reactionResult", ms);
+                reactionStatus = Label("Get ready…", 26, Cream);
             }
             else if (state.phase == "Intro")
             {
@@ -239,6 +272,9 @@ namespace PartyPrototype
                 Label(state.phase == "Finished" ? "FINAL SCORES" : "SCOREBOARD", 42, Cream);
                 Label("TOTAL GULPS  ·  FEWEST WINS", 23, Accent);
                 if (!string.IsNullOrEmpty(state.result)) Label(state.result, 25, Cream);
+                if (state.mode == "Reaction")
+                    foreach (var p in state.players.OrderBy(p => p.failed ? int.MaxValue : p.reactionMs))
+                        Label(p.name + " · " + (p.failed ? "Early / no valid tap" : PartyRules.ReactionSeconds(p.reactionMs)), 24, Cream);
                 int rank = 0;
                 foreach (var p in state.players.OrderBy(p => p.gulps))
                     Card((++rank) + ".  " + p.name + (p.id == myId ? " (you)" : "") + "     " + p.gulps
@@ -246,10 +282,17 @@ namespace PartyPrototype
                 if (state.phase == "Finished")
                 {
                     Label(state.result, 26);
-                    if (hosting) Button("Back to lobby", () => Command("reset"), true, true);
+                    if (solo)
+                    {
+                        Button("Play full game again", () => StartSolo(false, false, true), true, true);
+                        Button("Play quiz again", () => StartSolo(false), true, true);
+                        Button("Play Ball Tilt again", () => StartSolo(true));
+                        Button("Play reaction again", () => StartSolo(false, true));
+                    }
+                    else if (hosting) Button("Back to lobby", () => Command("reset"), true, true);
                     else Label("Waiting for the host…", 26);
                 }
-                else Continue(state.round >= PartyRules.RoundCount ? "Finish game" : "Next round  >");
+                else Continue(state.round >= state.totalRounds ? "Finish game" : "Next round  >");
             }
             else if (state.phase == "Choose")
             {
@@ -257,26 +300,64 @@ namespace PartyPrototype
                 Label(active + " answered correctly.", 30);
                 if (myId == state.activeId)
                     foreach (var p in state.players.Where(p => p.id != myId))
-                    { int target = p.id; Button("Give 1 gulp to " + p.name, () => Command("give", target)); }
+                    { int target = p.id; Button("Give " + BaseDrinks + " drink(s) to " + p.name, () => Command("give", target)); }
                 else Label("Waiting for " + active + " to choose someone…", 28, Accent);
             }
             else if (state.phase == "Quiz" || state.phase == "Reveal")
             {
-                Label("ROUND " + state.round + " / " + PartyRules.RoundCount + "  ·  " + active, 25, Accent);
+                Label("ROUND " + state.round + " / " + state.totalRounds + "  ·  " + active, 25, Accent);
                 if (state.phase == "Quiz") clock = Label(state.seconds + " seconds", 32, Cream);
                 else Label(state.result, 32, state.selectedIndex == state.correctIndex ? Correct : Wrong);
                 Card(state.question, 210, Cream, Background, 34);
                 for (int i = 0; i < state.answers.Length; i++) AnswerCard(i);
-                if (state.phase == "Reveal") Continue(state.drinkId < 0 ? "Choose who drinks  >" : "Continue  >");
+                if (state.phase == "Reveal") Continue(state.drinkId < 0 && !solo ? "Choose who drinks  >" : "Continue  >");
                 else Label(myId == state.activeId ? "YOUR TURN · TAP AN ANSWER" : "Watching " + active + " answer…", 24, Cream);
             }
             Space(16);
-            Button(hosting ? "Leave / end session" : "Leave session", () => Disconnect("Session ended."));
+            Button(solo ? "Back to menu" : hosting ? "Leave / end session" : "Leave session", () => Disconnect("Session ended."));
             var leave = content.GetChild(content.childCount - 1).GetComponent<LayoutElement>();
             leave.minHeight = leave.preferredHeight = 36;
             leave.GetComponent<Image>().color = Background;
             var leaveText = leave.GetComponentInChildren<Text>();
             leaveText.resizeTextMaxSize = 20; leaveText.color = Color.gray;
+        }
+        void LengthPicker(bool lobby)
+        {
+            int step = lobby ? state.lengthStep : selectedLength;
+            int players = lobby ? state.players.Count : 1;
+            Label("FULL GAME · LENGTH " + step + " / 10", 22, Accent);
+            Label(PartyRules.OrdinaryRounds(players, step) + " rounds + Ball Tilt finale", 23, Cream);
+            if (!lobby || hosting)
+            {
+                Button("Shorter game", () => ChangeLength(Math.Max(1, step - 1), lobby), step > 1);
+                Button("Longer game", () => ChangeLength(Math.Min(10, step + 1), lobby), step < 10);
+            }
+        }
+        void ChangeLength(int step, bool lobby)
+        {
+            selectedLength = step;
+            if (lobby) Command("length", step);
+            else
+            {
+                if (nameField != null) playerName = nameField.text;
+                if (addressField != null) address = addressField.text;
+                Render(true);
+            }
+        }
+        void DifficultyPicker(bool lobby)
+        {
+            int selected = lobby ? state.difficulty : selectedDifficulty;
+            Label("DIFFICULTY · " + PartyRules.DifficultyNames[selected].ToUpperInvariant(), 22, Accent);
+            if (!lobby || hosting)
+            {
+                Button("Change difficulty", () => {
+                    if (nameField != null && state == null) playerName = nameField.text;
+                    if (addressField != null && state == null) address = addressField.text;
+                    selectedDifficulty = (selected + 1) % 3;
+                    if (lobby) Command("difficulty", selectedDifficulty); else Render(true);
+                });
+            }
+            Label("Base: " + BaseDrinks + " drinks  ·  Maximum: " + (BaseDrinks + 2), 21, Cream);
         }
         Color PlayerColor(int id) => PlayerColors[Math.Abs(id) % PlayerColors.Length];
         void Continue(string caption)
@@ -364,13 +445,28 @@ namespace PartyPrototype
             PlayerPrefs.SetString("PartyPrototype.Name", playerName); PlayerPrefs.SetString("PartyPrototype.Address", address);
             return true;
         }
+        void StartSolo(bool ballTilt, bool reactionTest = false, bool full = false)
+        {
+            if (state == null && !SaveFields()) return;
+            try
+            {
+                network?.Dispose(); network = null;
+                var bank = JsonUtility.FromJson<QuestionBank>(Resources.Load<TextAsset>("PartyQuestions").text);
+                rules = new PartyRules(bank.questions, Environment.TickCount, true);
+                rules.Join(0, playerName); rules.SetDifficulty(selectedDifficulty); rules.SetLength(selectedLength);
+                solo = hosting = true; connecting = false; myId = 0;
+                if (full) rules.StartFull(Now); else if (reactionTest) rules.StartReaction(Now); else if (ballTilt) rules.StartTilt(Now); else rules.Start(Now);
+                state = rules.State; Render(true);
+            }
+            catch (Exception e) { Disconnect("Could not start solo: " + e.Message); }
+        }
         void Host()
         {
             if (!SaveFields()) return;
             try
             {
                 var bank = JsonUtility.FromJson<QuestionBank>(Resources.Load<TextAsset>("PartyQuestions").text);
-                rules = new PartyRules(bank.questions, Environment.TickCount); rules.Join(0, playerName);
+                rules = new PartyRules(bank.questions, Environment.TickCount); rules.Join(0, playerName); rules.SetDifficulty(selectedDifficulty); rules.SetLength(selectedLength);
                 network = new LanTransport(); network.Host(); hosting = true; myId = 0; state = rules.State;
                 Render(true);
             }
@@ -392,11 +488,17 @@ namespace PartyPrototype
         void HandleCommand(int id, Message m)
         {
             bool changed = false;
-            if (m.type == "tiltFinish") changed = rules.FinishTilt(id, m.round, Now);
+            if (m.type == "reactionResult") changed = rules.ReactionResult(id, m.round, m.value, Now);
+            else if (m.type == "tiltFail") changed = rules.FailTilt(id, m.round, Now);
+            else if (m.type == "tiltFinish") changed = rules.FinishTilt(id, m.round, Now);
             else if (m.type == "answer") changed = rules.Answer(id, m.round, m.value, Now);
             else if (m.type == "give") changed = rules.Give(id, m.round, m.value);
             else if (id == 0)
             {
+                if (m.type == "length") changed = rules.SetLength(m.value);
+                if (m.type == "fullStart") changed = rules.StartFull(Now);
+                if (m.type == "difficulty") changed = rules.SetDifficulty(m.value);
+                if (m.type == "reactionStart") changed = rules.StartReaction(Now);
                 if (m.type == "tiltStart") changed = rules.StartTilt(Now);
                 if (m.type == "start") changed = rules.Start(Now);
                 if (m.type == "next") changed = rules.Next(Now);
@@ -418,13 +520,24 @@ namespace PartyPrototype
                 tiltGame.Running = state.seconds <= 60;
                 var mine = state.players.FirstOrDefault(p => p.id == myId);
                 if (tiltStatus != null) tiltStatus.text = state.seconds > 60 ? "Starting in " + (state.seconds - 60)
+                    : mine != null && mine.failed ? "Out — maximum penalty. Waiting for the others…"
                     : mine != null && mine.tiltSeconds >= 0 ? "Finished! Waiting for the others…"
-                    : state.seconds + " seconds  ·  " + tiltGame.Falls + " falls";
+                    : state.seconds + " seconds";
+            }
+            if (reaction != null && state != null && state.phase == "Reaction")
+            {
+                reaction.Running = state.seconds <= 20;
+                if (reactionStatus != null) reactionStatus.text = state.seconds > 20 ? "Starting in " + (state.seconds - 20) : reaction.Status;
             }
             var safe = Screen.safeArea;
             safeArea.anchorMin = new Vector2(safe.xMin / Screen.width, safe.yMin / Screen.height);
             safeArea.anchorMax = new Vector2(safe.xMax / Screen.width, safe.yMax / Screen.height);
             portraitFrame.sizeDelta = new Vector2(Mathf.Min(680, safeArea.rect.width), 0);
+            if (solo)
+            {
+                if (rules.Tick(Now)) Publish();
+                return;
+            }
             if (network == null) return;
             int budget = 64;
             while (network != null && budget-- > 0 && network.Poll(out var evt))
@@ -488,7 +601,7 @@ namespace PartyPrototype
         void Disconnect(string message)
         {
             network?.Dispose(); network = null; state = null; rules = null;
-            hosting = connecting = false; myId = -1; pending.Clear(); closing.Clear(); notice = message;
+            hosting = connecting = solo = false; myId = -1; pending.Clear(); closing.Clear(); notice = message;
             Render(true);
         }
         void OnDestroy() { network?.Dispose(); Screen.sleepTimeout = SleepTimeout.SystemSetting; }
